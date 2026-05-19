@@ -88,6 +88,9 @@ function disposeBody(b) {
     mo.mesh.material.bumpMap?.dispose();
     mo.mesh.material.dispose();
   }
+  if (b.flares) for (const m of b.flares.children) {
+    m.geometry.dispose(); m.material.dispose();
+  }
   if (b.glow) scene.remove(b.glow);
   if (b.trailLine) { scene.remove(b.trailLine); b.trailLine.geometry.dispose(); }
 }
@@ -110,6 +113,58 @@ const glowTexture = (() => {
   g.fillRect(0, 0, 128, 128);
   return new THREE.CanvasTexture(c);
 })();
+
+// A few looping prominence arcs off the star's surface. Built on a unit
+// sphere (parented to the star mesh, so they scale & co-rotate with it).
+// Subtle on purpose — small count, gentle pulse.
+function makeFlares() {
+  const group = new THREE.Group();
+  const n = 3 + Math.floor(Math.random() * 2);          // 3–4
+  for (let i = 0; i < n; i++) {
+    const axis = new THREE.Vector3().randomDirection();
+    let t = new THREE.Vector3(0, 1, 0).cross(axis);
+    if (t.lengthSq() < 1e-4) t.set(1, 0, 0);
+    t.normalize();
+    const spread = 0.12 + Math.random() * 0.16;
+    const f1 = axis.clone().addScaledVector(t, -spread).normalize();
+    const f2 = axis.clone().addScaledVector(t, spread).normalize();
+    const apexH = 1.25 + Math.random() * 0.55;
+    const apex = axis.clone().multiplyScalar(apexH)
+      .add(t.clone().multiplyScalar((Math.random() - 0.5) * 0.3));
+    const curve = new THREE.QuadraticBezierCurve3(
+      f1.multiplyScalar(0.98), apex, f2.multiplyScalar(0.98));
+    const geo = new THREE.TubeGeometry(curve, 26,
+      0.02 + Math.random() * 0.025, 6, false);
+    const mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setHSL(0.07 + Math.random() * 0.05, 1, 0.6),
+      transparent: true, opacity: 0.5, depthWrite: false,
+      blending: THREE.AdditiveBlending });
+    const m = new THREE.Mesh(geo, mat);
+    m.userData = { phase: Math.random() * 6.283,
+                   speed: 0.5 + Math.random() * 0.9,
+                   base: 0.30 + Math.random() * 0.30 };
+    group.add(m);
+  }
+  return group;
+}
+
+function animateFlares(tSec) {
+  for (const b of world.bodies) {
+    if (!b.flares || !b.flares.visible) continue;
+    for (const m of b.flares.children) {
+      const u = m.userData;
+      // gentle breathing + occasional stronger eruption
+      const pulse = 0.4 + 0.6 * Math.pow(
+        Math.max(0, Math.sin(tSec * u.speed + u.phase)), 2);
+      const erupt = Math.pow(
+        Math.max(0, Math.sin(tSec * 0.13 + u.phase * 1.7)), 8) * 0.6;
+      m.material.opacity = u.base * pulse + erupt;
+      // uniform scale from the star centre → the arc rises/recedes a little
+      m.scale.setScalar(1 + 0.05 * Math.sin(tSec * u.speed * 1.3 + u.phase)
+                          + erupt * 0.35);
+    }
+  }
+}
 
 function ensureMesh(b) {
   if (b.mesh) return;
@@ -137,6 +192,9 @@ function ensureMesh(b) {
       depthWrite: false, blending: THREE.AdditiveBlending });
     b.glow = new THREE.Sprite(glowMat);
     scene.add(b.glow);
+
+    b.flares = makeFlares();
+    b.mesh.add(b.flares);          // inherits star scale & rotation
   }
 }
 
@@ -244,6 +302,7 @@ function syncMeshes() {
     b.mesh.rotation.y = (world.time * (b.spin || 0)) % (Math.PI * 2);
     const info = physicsOf(b);
     applyState(b, info);
+    if (b.flares) b.flares.visible = info.accent === 'star' || info.accent === 'normal';
     updateMoons(b);
     if (b.ring) {
       b.ring.position.copy(b.mesh.position);
@@ -383,6 +442,7 @@ function frame(now) {
 
   controls.update(dtReal);
   syncMeshes();
+  animateFlares(now / 1000);     // wall-clock → flares pulse even when paused
   ui.tick();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
