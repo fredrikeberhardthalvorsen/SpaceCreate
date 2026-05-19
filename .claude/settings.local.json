@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py --version)",
+      "Bash(npx --version)",
+      "Bash(node server.mjs)",
+      "Bash(curl -s -o /dev/null -w \"index.html %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"main.js   %{http_code}\\\\n\" http://localhost:5173/src/main.js)",
+      "Bash(curl -s -o /dev/null -w \"physics   %{http_code}\\\\n\" http://localhost:5173/src/physics.js)",
+      "Bash(curl -s -o /dev/null -w \"style.css %{http_code}\\\\n\" http://localhost:5173/src/style.css)"
+    ]
+  }
+}

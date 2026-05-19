@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SpaceCreate — N-body sandbox</title>
+<link rel="stylesheet" href="src/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<button id="btnRefresh" title="Refresh / restart the game"
+        onclick="location.reload()">⟳ Refresh</button>
+
+<div id="hud">
+  <div id="hud-speed">flight speed: <span id="speedVal">—</span></div>
+  <div id="hud-sim"><span id="simDate">—</span> &nbsp;|&nbsp; t = <span id="simTime">0.0</span> yr &nbsp;|&nbsp; <span id="simRate">1</span> yr/s <span id="pausedTag"></span></div>
+  <div id="hud-help">
+    <b>Fly:</b> click scene to capture mouse · <b>WASD</b> move · <b>Q/E</b> down/up ·
+    <b>Shift</b> boost · <b>wheel</b> speed · <b>Esc</b> release ·
+    <b>click a body</b> to select &amp; focus
+  </div>
+</div>
+
+<div id="panel">
+  <h1>SpaceCreate</h1>
+
+  <section>
+    <h2>Time</h2>
+    <div class="row">
+      <button id="btnPause">⏸ Pause</button>
+      <button id="btnStep">⏭ Step</button>
+      <button id="btnReverse">⏪ Reverse</button>
+    </div>
+    <div class="row">
+      <button id="btnSlower">÷10</button>
+      <button id="btnReal">1 yr/s</button>
+      <button id="btnFaster">×10</button>
+    </div>
+    <label>Rate: <b id="rateLabel">1.0 yr/s</b>
+      <input id="rate" type="range" min="-1000" max="1000" step="1" value="333" />
+      <span class="hint">logarithmic — fine near the centre, huge at the ends</span>
+    </label>
+    <label><input id="trails" type="checkbox" checked /> Orbit trails</label>
+    <label><input id="exagg" type="checkbox" checked /> Exaggerate body sizes</label>
+  </section>
+
+  <section>
+    <h2>Scenes</h2>
+    <div class="row">
+      <button data-preset="solar">Solar system</button>
+      <button data-preset="binary">Binary star</button>
+    </div>
+    <div class="row">
+      <button data-preset="chaos">Random chaos</button>
+      <button data-preset="empty">Empty</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Add body</h2>
+    <label>Type
+      <select id="newType">
+        <option value="planet">Planet</option>
+        <option value="star">Star</option>
+      </select>
+    </label>
+    <label>Name <input id="newName" type="text" value="New body" /></label>
+    <label>Mass (M☉) <input id="newMass" type="number" value="0.000003" step="any" /></label>
+    <p class="hint">Click <b>Place in orbit</b>, then click empty space in the scene.
+       The body gets a circular orbit around the nearest heavy body.</p>
+    <div class="row">
+      <button id="btnPlace">＋ Place in orbit</button>
+      <button id="btnPlaceCancel" hidden>Cancel placing</button>
+    </div>
+  </section>
+
+  <section id="editor" hidden>
+    <h2>Selected: <span id="selName">—</span></h2>
+    <label>Name <input id="edName" type="text" /></label>
+    <label>Mass (M☉) <input id="edMass" type="number" step="any" /></label>
+    <label>Radius: <b id="edRadiusVal">—</b>
+      <input id="edRadius" type="range" min="0" max="1000" step="1" />
+      <span class="hint">real radius — mass stays fixed, so squeezing it changes
+        density, gravity… and can collapse it</span>
+    </label>
+    <label>Day length: <b id="edDayVal">—</b>
+      <input id="edDay" type="range" min="-200" max="200" step="1" />
+      <span class="hint">how long one rotation takes (drag past 0 to spin the other way)</span>
+    </label>
+    <label>Color <input id="edColor" type="color" /></label>
+    <label>Speed × <input id="edBoost" type="range" min="0" max="3" step="0.05" value="1" />
+      <span class="hint">(scales velocity — apply to slingshot or stop a body)</span>
+    </label>
+    <div class="row">
+      <button id="btnApplyBoost">Apply speed ×</button>
+      <button id="btnFocus">Focus camera</button>
+    </div>
+    <div class="row">
+      <button id="btnDelete" class="danger">🗑 Delete body</button>
+    </div>
+    <div class="readout" id="selReadout"></div>
+  </section>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
