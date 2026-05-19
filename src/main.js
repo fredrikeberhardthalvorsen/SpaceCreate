@@ -67,6 +67,7 @@ function load(presetName) {
   world.bodies = buildScene(presetName).filter(b => b.name !== '_bc');
   world.time = 0;
   world.selected = null;
+  setFollow(null);
   ui.refresh();
 }
 
@@ -88,6 +89,7 @@ function disposeBody(b) {
     mo.mesh.material.bumpMap?.dispose();
     mo.mesh.material.dispose();
   }
+  if (b.atmo) b.atmo.material.dispose();
   if (b.flares) for (const m of b.flares.children) {
     m.geometry.dispose(); m.material.dispose();
   }
@@ -166,6 +168,41 @@ function animateFlares(tSec) {
   }
 }
 
+// Atmosphere "amount" ≈ real surface pressure as a proxy. 0 → no shell.
+// [amount, tint]. Gas giants are mostly atmosphere; Mercury has none.
+const ATMO = {
+  Venus:   [1.00, 0xe6c87a],
+  Earth:   [0.45, 0x6db3ff],
+  Mars:    [0.08, 0xd9a07a],
+  Jupiter: [0.85, 0xd9b48a],
+  Saturn:  [0.75, 0xe3d6a8],
+  Uranus:  [0.78, 0x9fe3e8],
+  Neptune: [0.82, 0x5c7bff],
+};
+function atmoFor(b) {
+  if (b.type !== 'planet') return null;
+  if (ATMO[b.name]) return ATMO[b.name];
+  if (b.name in { Mercury: 1 }) return null;
+  const s = styleFor(b);                       // user-added bodies
+  if (s === 'gas') return [0.7, b.color];
+  if (s === 'rock') return [0.12, b.color];
+  return null;
+}
+
+function buildAtmosphere(b) {
+  const a = atmoFor(b);
+  if (!a) return;
+  const [amount, color] = a;
+  const mat = new THREE.MeshBasicMaterial({
+    color, transparent: true, side: THREE.BackSide, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    opacity: Math.min(0.8, 0.12 + 0.6 * amount),
+  });
+  b.atmo = new THREE.Mesh(sphereGeo, mat);
+  b.atmo.scale.setScalar(1.04 + 0.16 * amount);   // thicker air → bigger shell
+  b.mesh.add(b.atmo);                              // tracks the planet's size
+}
+
 function ensureMesh(b) {
   if (b.mesh) return;
   const isStar = b.type === 'star';
@@ -183,6 +220,7 @@ function ensureMesh(b) {
   if (ring) { b.ring = ring; scene.add(ring); }
 
   buildMoons(b);
+  buildAtmosphere(b);
 
   if (isStar) {
     const light = new THREE.PointLight(0xfff0d0, 2.5, 0, 0.0);
@@ -303,6 +341,7 @@ function syncMeshes() {
     const info = physicsOf(b);
     applyState(b, info);
     if (b.flares) b.flares.visible = info.accent === 'star' || info.accent === 'normal';
+    if (b.atmo) b.atmo.visible = info.accent === 'normal';   // gone if collapsed
     updateMoons(b);
     if (b.ring) {
       b.ring.position.copy(b.mesh.position);
@@ -354,7 +393,8 @@ canvas.addEventListener('click', (e) => {
     return;
   }
   if (placing) { placeNewBody(); return; }
-  controls.lock();                // empty space → start flying
+  setFollow(null);                // empty space → release follow & fly free
+  controls.lock();
 });
 
 function placeNewBody() {
@@ -388,9 +428,31 @@ function heaviestNear(posAU) {
   return best;
 }
 
+// Camera follow: ride along with a body. We track its per-frame displacement
+// and shift the camera by the same amount, so the planet stays put in view
+// while you can still look around / fly relative to it.
+let followTarget = null;
+const followPrev = new THREE.Vector3();
+const followTmp = new THREE.Vector3();
+
+function setFollow(b) {
+  followTarget = b || null;
+  if (b && b.mesh) followPrev.copy(b.mesh.position);
+}
+
+function updateFollow() {
+  if (!followTarget) return;
+  if (!world.bodies.includes(followTarget)) { followTarget = null; return; }
+  const p = followTarget.mesh.position;
+  camera.position.add(followTmp.subVectors(p, followPrev));
+  followPrev.copy(p);
+}
+
 function selectBody(b) {
   world.selected = b;
   ui.showEditor(b);
+  focusCamera(b);          // snap to it…
+  setFollow(b);            // …then follow it as it orbits
 }
 
 function focusCamera(b) {
@@ -399,6 +461,7 @@ function focusCamera(b) {
   camera.position.set(target.x + off, target.y + off * 0.4, target.z + off);
   camera.lookAt(target);
   controls.euler.setFromQuaternion(camera.quaternion);
+  setFollow(b);
 }
 
 // ---- UI wiring -----------------------------------------------------------
@@ -442,6 +505,7 @@ function frame(now) {
 
   controls.update(dtReal);
   syncMeshes();
+  updateFollow();                // ride along with the selected body
   animateFlares(now / 1000);     // wall-clock → flares pulse even when paused
   ui.tick();
   renderer.render(scene, camera);

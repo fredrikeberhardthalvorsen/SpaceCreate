@@ -25,7 +25,7 @@
   <div id="hud-help">
     <b>Fly:</b> click scene to capture mouse · <b>WASD</b> move · <b>Q/E</b> down/up ·
     <b>Shift</b> boost · <b>wheel</b> speed · <b>Esc</b> release ·
-    <b>click a body</b> to select &amp; focus
+    <b>click a body</b> to select &amp; follow it · click empty space to release
   </div>
 </div>
 
@@ -88,8 +88,11 @@
     <label>Mass (M☉) <input id="edMass" type="number" step="any" /></label>
     <label>Radius: <b id="edRadiusVal">—</b>
       <input id="edRadius" type="range" min="0" max="1000" step="1" />
-      <span class="hint">real radius — mass stays fixed, so squeezing it changes
-        density, gravity… and can collapse it</span>
+    </label>
+    <label><input id="edKeepDensity" type="checkbox" /> Scale mass with size
+      <span class="hint">ON: bigger ⇒ heavier ⇒ gravity grows and it really
+        yanks the other planets (keeps density constant).<br>
+        OFF: mass fixed — squeezing it just changes density and can collapse it.</span>
     </label>
     <label>Day length: <b id="edDayVal">—</b>
       <input id="edDay" type="range" min="-200" max="200" step="1" />

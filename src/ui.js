@@ -138,9 +138,16 @@ export function setupUI(world, api) {
     if (world.selected) world.selected.mass = Math.max(1e-9, parseFloat(e.target.value) || 1e-9);
   };
   $('edRadius').oninput = (e) => {
-    if (!world.selected) return;
+    const b = world.selected;
+    if (!b) return;
     const km = posToKm(parseInt(e.target.value, 10));
-    world.selected.radiusKm = km;
+    if ($('edKeepDensity').checked && b.radiusKm > 0) {
+      // hold density constant → mass ∝ r³, so its real gravitational pull
+      // (and orbital influence on everything else) grows fast.
+      b.mass = Math.max(1e-12, b.mass * Math.pow(km / b.radiusKm, 3));
+      $('edMass').value = b.mass;
+    }
+    b.radiusKm = km;
     $('edRadiusVal').textContent = radiusStr(km);
   };
   $('edColor').oninput = (e) => {
