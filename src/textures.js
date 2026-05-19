@@ -199,6 +199,82 @@ export function makeTextures(body) {
 
 function fbmStar(a, b, u, v) { return a(u, v) * 0.6 + b(u * 2, v * 2) * 0.4; }
 
+// ---- moon textures -------------------------------------------------------
+// Smaller canvas than planets (there are ~20 moons). Generic moons are
+// cratered rock tinted to their real colour; a few famous ones get their
+// real distinctive look.
+const ICY_MOONS = new Set(['Mimas', 'Enceladus', 'Tethys', 'Dione', 'Rhea',
+  'Europa', 'Miranda', 'Ariel', 'Umbriel', 'Titania', 'Oberon']);
+
+export function makeMoonTexture(name, tintHex, seed) {
+  const MW = 512, MH = 256;
+  const rand = mulberry32((seed * 374761393) >>> 0);
+  const tint = hex(tintHex);
+  const cv = document.createElement('canvas'); cv.width = MW; cv.height = MH;
+  const bp = document.createElement('canvas'); bp.width = MW; bp.height = MH;
+  const img = cv.getContext('2d').createImageData(MW, MH);
+  const bmp = bp.getContext('2d').createImageData(MW, MH);
+  const d = img.data, bd = bmp.data;
+
+  const ground = fbm(rand, 4, 4);
+  const fine = fbm(rand, 4, 9);
+  const warp = fbm(rand, 2, 3);
+  const ridged = (x, y) => 1 - Math.abs(2 * fine(x, y) - 1);   // crack/streak field
+
+  for (let y = 0; y < MH; y++) {
+    const v = y / MH;
+    for (let x = 0; x < MW; x++) {
+      const u = x / MW;
+      let g = ground(u, v), col, height = g;
+
+      if (name === 'Io') {                       // sulfur yellows + dark spots
+        g = post(g, 8);
+        col = ramp([[0, [120, 70, 20]], [0.4, [225, 190, 70]],
+                    [0.7, [240, 220, 130]], [1, [250, 245, 210]]], g);
+        col = mix(col, [70, 40, 30], smooth(0.66, 0.7, fine(u, v)) * 0.6);
+      } else if (name === 'Titan') {             // smooth orange haze
+        const s = post(0.45 + 0.55 * ground(u + warp(u, v) * 0.2, v), 7);
+        col = ramp([[0, [150, 95, 40]], [0.5, [205, 150, 75]],
+                    [1, [232, 190, 120]]], s);
+      } else if (name === 'Triton') {            // pink cantaloupe + streaks
+        g = post(g, 9);
+        col = ramp([[0, [180, 150, 140]], [0.5, [212, 190, 178]],
+                    [1, [238, 226, 214]]], g);
+        col = mix(col, [120, 90, 95], smooth(0.55, 0.5, ridged(u, v)) * 0.4);
+      } else if (name === 'Europa') {            // bright ice, reddish lineae
+        col = mix([224, 230, 236], [205, 214, 224], post(g, 6));
+        const crack = smooth(0.78, 0.92, ridged(u + warp(u, v) * 0.15, v));
+        col = mix(col, [150, 95, 70], crack * 0.8);
+        height = 0.5 + crack * 0.3;
+      } else if (ICY_MOONS.has(name)) {          // bright cratered ice
+        const t = post(g, 7);
+        col = mix([170, 178, 188], [236, 240, 245], t);
+        const cr = smooth(0.6, 0.64, fine(u, v));
+        col = mix(col, [120, 128, 140], cr * 0.5);
+        height = t * (1 - cr);
+      } else {                                   // generic cratered rock
+        const t = post(g * 0.6 + fine(u, v) * 0.4, 6);
+        col = mix(mix([45, 42, 40], tint, 0.65),
+                  mix(tint, [225, 222, 218], 0.35), t);
+        const cr = smooth(0.6, 0.645, fine(u, v));
+        col = mix(col, [30, 28, 26], cr * 0.55);
+        height = t * (1 - cr);
+      }
+
+      const i = (y * MW + x) * 4;
+      d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
+      const bv = Math.max(0, Math.min(255, height * 255));
+      bd[i] = bd[i + 1] = bd[i + 2] = bv; bd[i + 3] = 255;
+    }
+  }
+  cv.getContext('2d').putImageData(img, 0, 0);
+  bp.getContext('2d').putImageData(bmp, 0, 0);
+  const map = new THREE.CanvasTexture(cv);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  return { map, bump: new THREE.CanvasTexture(bp) };
+}
+
 // ---- ring systems --------------------------------------------------------
 // extents/bands in PLANET RADII; tilt = real axial tilt (rad). `arcs` adds
 // Neptune-style brightness clumps on the outermost band. Inner rocky planets

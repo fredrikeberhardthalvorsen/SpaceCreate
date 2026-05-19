@@ -3,7 +3,7 @@ import { FlyControls } from './controls.js';
 import { step, makeBody, circularOrbitVelocity } from './physics.js';
 import { physicsOf } from './bodyinfo.js';
 import { buildScene } from './scenes.js';
-import { makeTextures, makeRingMesh, styleFor } from './textures.js';
+import { makeTextures, makeRingMesh, makeMoonTexture, styleFor } from './textures.js';
 import { MOONS } from './moons.js';
 import { setupUI } from './ui.js';
 
@@ -17,7 +17,9 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 400000);
-camera.position.set(0, 1600, 4200);
+// Open on a framed overview of the system (elevated & tilted so the orbits
+// read as ellipses and Saturn's rings show), not way out where it's a dot.
+camera.position.set(0, 760, 1850);
 camera.lookAt(0, 0, 0);
 
 scene.add(new THREE.AmbientLight(0x223355, 0.55));
@@ -81,7 +83,10 @@ function disposeBody(b) {
     disk.geometry.dispose(); disk.material.map?.dispose(); disk.material.dispose();
   }
   if (b.moons) for (const mo of b.moons) {
-    scene.remove(mo.mesh); mo.mesh.material.dispose();
+    scene.remove(mo.mesh);
+    mo.mesh.material.map?.dispose();
+    mo.mesh.material.bumpMap?.dispose();
+    mo.mesh.material.dispose();
   }
   if (b.glow) scene.remove(b.glow);
   if (b.trailLine) { scene.remove(b.trailLine); b.trailLine.geometry.dispose(); }
@@ -154,8 +159,9 @@ function buildMoons(b) {
   const smas = list.map(m => Math.log(m[2]));
   const lo = Math.min(...smas), hi = Math.max(...smas);
   b.moons = list.map(([name, rKm, sma, tint], i) => {
-    const mesh = new THREE.Mesh(sphereGeo,
-      new THREE.MeshStandardMaterial({ color: tint, roughness: 0.95 }));
+    const mt = makeMoonTexture(name, tint, (b.id * 131 + i + 1) >>> 0);
+    const mesh = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({
+      map: mt.map, bumpMap: mt.bump, bumpScale: 0.6, roughness: 0.95 }));
     scene.add(mesh);
     return {
       mesh, name, rKm, sma,
