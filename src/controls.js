@@ -10,10 +10,11 @@ export class FlyControls {
     this.enabled = false;
     this.speed = 120;            // scene units / second
     this.keys = new Set();
+    this.rightDrag = false;      // right-mouse held → look around (no lock)
     this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
 
     this._onMouseMove = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled && !this.rightDrag) return;
       this.euler.setFromQuaternion(camera.quaternion);
       this.euler.y -= e.movementX * 0.0022;
       this.euler.x -= e.movementY * 0.0022;
@@ -21,6 +22,13 @@ export class FlyControls {
       this.euler.x = Math.max(-lim, Math.min(lim, this.euler.x));
       camera.quaternion.setFromEuler(this.euler);
     };
+    this._onMouseDown = (e) => {
+      if (e.button === 2) { this.rightDrag = true; this.dom.style.cursor = 'grabbing'; }
+    };
+    this._onMouseUp = (e) => {
+      if (e.button === 2) { this.rightDrag = false; this.dom.style.cursor = ''; }
+    };
+    this._onContextMenu = (e) => e.preventDefault();   // no system menu on right-click
     this._onKeyDown = (e) => this.keys.add(e.code);
     this._onKeyUp = (e) => this.keys.delete(e.code);
     this._onWheel = (e) => {
@@ -32,9 +40,12 @@ export class FlyControls {
     };
 
     document.addEventListener('mousemove', this._onMouseMove);
+    document.addEventListener('mouseup', this._onMouseUp);
     document.addEventListener('keydown', this._onKeyDown);
     document.addEventListener('keyup', this._onKeyUp);
     document.addEventListener('pointerlockchange', this._onLockChange);
+    this.dom.addEventListener('mousedown', this._onMouseDown);
+    this.dom.addEventListener('contextmenu', this._onContextMenu);
     this.dom.addEventListener('wheel', this._onWheel, { passive: true });
   }
 

@@ -60,6 +60,36 @@ export function setupUI(world, api) {
     btn.onclick = () => api.load(btn.dataset.preset);
   }
 
+  // --- Go-to-body dropdown -----------------------------------------------
+  const jump = $('bodyJump');
+  function rebuildBodyList() {
+    const sel = world.selected ? String(world.selected.id) : '';
+    jump.innerHTML = '<option value="">— pick a body —</option>';
+    for (const b of world.bodies) {
+      const o = document.createElement('option');
+      o.value = String(b.id);
+      o.textContent = b.name + (b.type === 'star' ? ' ★' : '');
+      jump.appendChild(o);
+    }
+    jump.value = sel;
+  }
+  jump.onchange = (e) => {
+    const id = parseInt(e.target.value, 10);
+    const b = world.bodies.find(x => x.id === id);
+    if (b) api.goto(b);
+  };
+
+  // --- floating + button toggles the Add-body popup; popup hides while a
+  //     body is selected (showEditor handles that side).
+  const addOpen = $('btnAddOpen'), addPopup = $('addPopup');
+  function setAddVisible(on) {
+    if (!on) { addOpen.hidden = true; addPopup.hidden = true; return; }
+    // not selected → show the + (popup stays whatever it was)
+    addOpen.hidden = !addPopup.hidden ? true : false;
+  }
+  addOpen.onclick = () => { addPopup.hidden = false; addOpen.hidden = true; };
+  $('btnAddClose').onclick = () => { addPopup.hidden = true; addOpen.hidden = false; };
+
   // --- add body -----------------------------------------------------------
   const btnPlace = $('btnPlace');
   const btnCancel = $('btnPlaceCancel');
@@ -129,8 +159,14 @@ export function setupUI(world, api) {
   // --- editor -------------------------------------------------------------
   const ed = $('editor');
   function showEditor(b) {
-    if (!b) { ed.hidden = true; return; }
+    if (!b) {
+      ed.hidden = true;
+      addOpen.hidden = false;          // restore the + when nothing's picked
+      return;
+    }
     ed.hidden = false;
+    addOpen.hidden = true;             // hide both the + and the popup
+    addPopup.hidden = true;
     $('selName').textContent = b.name;
     $('edName').value = b.name;
     $('edMass').value = b.mass;
@@ -183,6 +219,7 @@ export function setupUI(world, api) {
     $('edBoost').value = 1;
   };
   $('btnFocus').onclick = () => { if (world.selected) api.focus(world.selected); };
+  $('btnLand').onclick = () => { if (world.selected) api.land(world.selected); };
   $('btnDelete').onclick = () => {
     if (!world.selected) return;
     api.deleteBody(world.selected);
@@ -215,7 +252,7 @@ export function setupUI(world, api) {
   }
 
   return {
-    refresh() { showEditor(world.selected); },
+    refresh() { showEditor(world.selected); rebuildBodyList(); },
     showEditor,
     armPlacing,
     tick,

@@ -8,7 +8,10 @@
       "Bash(curl -s -o /dev/null -w \"main.js   %{http_code}\\\\n\" http://localhost:5173/src/main.js)",
       "Bash(curl -s -o /dev/null -w \"physics   %{http_code}\\\\n\" http://localhost:5173/src/physics.js)",
       "Bash(curl -s -o /dev/null -w \"style.css %{http_code}\\\\n\" http://localhost:5173/src/style.css)",
-      "Bash(node -e 'const s=require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''src/__TRACKED_VAR__.js'\\\\'','\\\\''utf8'\\\\''\\); new \\(require\\('\\\\''vm'\\\\''\\).Script\\)\\(s.replace\\(/^\\\\s*import[^;]*;?\\\\s*$/gm,'\\\\'''\\\\''\\).replace\\(/^export /gm,'\\\\'''\\\\''\\)\\); console.log\\('\\\\''__TRACKED_VAR__.js OK'\\\\''\\)')"
+      "Bash(node -e 'const s=require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''src/__TRACKED_VAR__.js'\\\\'','\\\\''utf8'\\\\''\\); new \\(require\\('\\\\''vm'\\\\''\\).Script\\)\\(s.replace\\(/^\\\\s*import[^;]*;?\\\\s*$/gm,'\\\\'''\\\\''\\).replace\\(/^export /gm,'\\\\'''\\\\''\\)\\); console.log\\('\\\\''__TRACKED_VAR__.js OK'\\\\''\\)')",
+      "Bash(node --check src/main.js)",
+      "Bash(node --check src/ui.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)"
     ]
   }
 }

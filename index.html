@@ -19,12 +19,15 @@
 <button id="btnRefresh" title="Refresh / restart the game"
         onclick="location.reload()">⟳ Refresh</button>
 
+<div id="hover" hidden></div>
+
 <div id="hud">
   <div id="hud-speed">flight speed: <span id="speedVal">—</span></div>
   <div id="hud-sim"><span id="simDate">—</span> &nbsp;|&nbsp; t = <span id="simTime">0.0</span> yr &nbsp;|&nbsp; <span id="simRate">1</span> yr/s <span id="pausedTag"></span></div>
   <div id="hud-help">
     <b>Fly:</b> click scene to capture mouse · <b>WASD</b> move · <b>Q/E</b> down/up ·
     <b>Shift</b> boost · <b>wheel</b> speed · <b>Esc</b> release ·
+    <b>right-drag</b> to look without flying ·
     <b>click a body</b> to select &amp; follow it · click empty space to release
   </div>
 </div>
@@ -64,22 +67,9 @@
   </section>
 
   <section>
-    <h2>Add body</h2>
-    <label>Type
-      <select id="newType">
-        <option value="planet">Planet</option>
-        <option value="star">Star</option>
-        <option value="sagA">Sagittarius A* (black hole)</option>
-      </select>
-    </label>
-    <label>Name <input id="newName" type="text" value="New body" /></label>
-    <label>Mass (M☉) <input id="newMass" type="number" value="0.000003" step="any" /></label>
-    <p class="hint">Click <b>Place in orbit</b>, then click empty space in the scene.
-       The body gets a circular orbit around the nearest heavy body.</p>
-    <div class="row">
-      <button id="btnPlace">＋ Place in orbit</button>
-      <button id="btnPlaceCancel" hidden>Cancel placing</button>
-    </div>
+    <h2>Go to body</h2>
+    <select id="bodyJump"><option value="">— pick a body —</option></select>
+    <span class="hint">selects it and glides the camera over</span>
   </section>
 
   <section id="editor" hidden>
@@ -113,10 +103,37 @@
       <button id="btnFocus">Focus camera</button>
     </div>
     <div class="row">
+      <button id="btnLand">🛬 Land on surface</button>
+    </div>
+    <div class="row">
       <button id="btnDelete" class="danger">🗑 Delete body</button>
     </div>
     <div class="readout" id="selReadout"></div>
   </section>
+</div>
+
+<button id="btnAddOpen" title="Add a body">＋</button>
+
+<div id="addPopup" hidden>
+  <div class="addHead">
+    <h2>Add body</h2>
+    <button id="btnAddClose" title="Close">×</button>
+  </div>
+  <label>Type
+    <select id="newType">
+      <option value="planet">Planet</option>
+      <option value="star">Star</option>
+      <option value="sagA">Sagittarius A* (black hole)</option>
+    </select>
+  </label>
+  <label>Name <input id="newName" type="text" value="New body" /></label>
+  <label>Mass (M☉) <input id="newMass" type="number" value="0.000003" step="any" /></label>
+  <p class="hint">Click <b>Place in orbit</b>, then click empty space in the scene.
+    The body gets a circular orbit around the nearest heavy body.</p>
+  <div class="row">
+    <button id="btnPlace">＋ Place in orbit</button>
+    <button id="btnPlaceCancel" hidden>Cancel placing</button>
+  </div>
 </div>
 
 <script type="module" src="src/main.js"></script>

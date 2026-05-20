@@ -89,6 +89,7 @@ function disposeBody(b) {
     mo.mesh.material.bumpMap?.dispose();
     mo.mesh.material.dispose();
   }
+  if (b.hitbox) b.hitbox.material.dispose();
   if (b.atmo) b.atmo.material.dispose();
   if (b.flares) for (const m of b.flares.children) {
     m.geometry.dispose(); m.material.dispose();
@@ -242,6 +243,15 @@ function ensureMesh(b) {
   buildMoons(b);
   buildAtmosphere(b);
 
+  // Invisible "click halo" — a larger transparent sphere that makes small
+  // bodies easy to hit with the cursor. Carries a userData.body backref so
+  // the raycaster resolves it to the actual body.
+  const hitMat = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0, depthWrite: false, side: THREE.FrontSide });
+  b.hitbox = new THREE.Mesh(sphereGeo, hitMat);
+  b.hitbox.userData.body = b;
+  b.mesh.add(b.hitbox);
+
   if (isStar) {
     const light = new THREE.PointLight(0xfff0d0, 2.5, 0, 0.0);
     b.light = light;
@@ -362,12 +372,19 @@ function syncMeshes() {
     const r = radiusOf(b);
     b.mesh.position.copy(b.pos).multiplyScalar(SCALE);
     b.mesh.scale.setScalar(r);
-    b.mesh.rotation.y = (world.time * (b.spin || 0)) % (Math.PI * 2);
+    b.mesh.rotation.y = world.time * (b.spin || 0);   // no mod → monotonic for follow-spin
+    if (b.hitbox) b.hitbox.scale.setScalar(Math.max(1.5, 4 / r));
     const info = physicsOf(b);
     updateStarPhase(b);                       // handle red-giant flip first…
     applyState(b, info);                      // …then BH override can win
     if (b.flares) b.flares.visible = info.accent === 'star' || info.accent === 'normal';
-    if (b.atmo) b.atmo.visible = info.accent === 'normal';   // gone if collapsed
+    if (b.atmo) {
+      // hide when collapsed, AND when the camera is *inside* the shell
+      // (otherwise the back-side haze blankets the ground after landing).
+      const shellR = r * b.atmo.scale.x;
+      const inside = camera.position.distanceTo(b.mesh.position) < shellR * 0.98;
+      b.atmo.visible = info.accent === 'normal' && !inside;
+    }
     updateMoons(b);
     if (b.ring) {
       b.ring.position.copy(b.mesh.position);
@@ -411,16 +428,55 @@ canvas.addEventListener('click', (e) => {
   ndc.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(ndc, camera);
 
-  const meshes = world.bodies.map(b => b.mesh).filter(Boolean);
-  const hit = raycaster.intersectObjects(meshes, false)[0];
+  const targets = [];
+  for (const b of world.bodies) {
+    if (b.mesh) targets.push(b.mesh);
+    if (b.hitbox) targets.push(b.hitbox);
+  }
+  const hit = raycaster.intersectObjects(targets, false)[0];
 
   if (hit) {
     selectBody(hit.object.userData.body);
     return;
   }
   if (placing) { placeNewBody(); return; }
-  setFollow(null); flight = null;  // empty space → release & fly free
+  setFollow(null); flight = null; camera.up.set(0, 1, 0);
   controls.lock();
+});
+
+// Hover label — raycast on mousemove and show the body's name near the
+// cursor. Skipped while pointer-locked (flying) so it doesn't flicker.
+const hoverEl = document.getElementById('hover');
+canvas.addEventListener('mousemove', (e) => {
+  if (controls.enabled || controls.rightDrag) { hoverEl.hidden = true; return; }
+  ndc.x = (e.clientX / innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const tg = [];
+  for (const b of world.bodies) {
+    if (b.mesh) tg.push(b.mesh);
+    if (b.hitbox) tg.push(b.hitbox);
+  }
+  const hit = raycaster.intersectObjects(tg, false)[0];
+  if (hit && hit.object.userData.body) {
+    const b = hit.object.userData.body;
+    // body colour → label theme; very dark bodies (black holes) get a
+    // readable fallback so the border doesn't vanish.
+    const c = b.color;
+    const r = (c >> 16) & 255, g = (c >> 8) & 255, bl = c & 255;
+    const tint = (r + g + bl) < 40 ? '#ff8a3a' : '#' + c.toString(16).padStart(6, '0');
+    hoverEl.textContent = b.name;
+    hoverEl.style.left = e.clientX + 'px';
+    hoverEl.style.top  = e.clientY + 'px';
+    hoverEl.style.color = tint;
+    hoverEl.style.borderColor = tint;
+    hoverEl.style.boxShadow = '0 0 10px ' + tint + '55';
+    hoverEl.hidden = false;
+    canvas.style.cursor = 'pointer';
+  } else {
+    hoverEl.hidden = true;
+    canvas.style.cursor = '';
+  }
 });
 
 function placeNewBody() {
@@ -449,6 +505,7 @@ function placeNewBody() {
   });
   if (center) b.vel.copy(circularOrbitVelocity(posAU, center, THREE));
   world.bodies.push(b);
+  ui.refresh();                                  // dropdown picks up the new body
   selectBody(b);
   ui.armPlacing(false);
   placing = null;
@@ -466,12 +523,19 @@ function heaviestNear(posAU) {
 // and shift the camera by the same amount, so the planet stays put in view
 // while you can still look around / fly relative to it.
 let followTarget = null;
+let followSurface = false;        // true when landed — also rotate with spin
+let followPrevRotY = 0;
 const followPrev = new THREE.Vector3();
 const followTmp = new THREE.Vector3();
+const SPIN_AXIS = new THREE.Vector3(0, 1, 0);
 
-function setFollow(b) {
+function setFollow(b, surface = false) {
   followTarget = b || null;
-  if (b && b.mesh) followPrev.copy(b.mesh.position);
+  followSurface = !!(b && surface);
+  if (b && b.mesh) {
+    followPrev.copy(b.mesh.position);
+    followPrevRotY = b.mesh.rotation.y;
+  }
 }
 
 function updateFollow() {
@@ -480,6 +544,21 @@ function updateFollow() {
   const p = followTarget.mesh.position;
   camera.position.add(followTmp.subVectors(p, followPrev));
   followPrev.copy(p);
+
+  if (followSurface) {
+    // Carry the camera with the planet's rotation, so a landing spot stays
+    // glued to that *spot on the surface* rather than drifting as it spins.
+    const rotY = followTarget.mesh.rotation.y;
+    const dRot = rotY - followPrevRotY;
+    followPrevRotY = rotY;
+    if (dRot !== 0) {
+      camera.position.sub(p).applyAxisAngle(SPIN_AXIS, dRot).add(p);
+      camera.up.applyAxisAngle(SPIN_AXIS, dRot);
+      const q = new THREE.Quaternion().setFromAxisAngle(SPIN_AXIS, dRot);
+      camera.quaternion.premultiply(q);
+      controls.euler.setFromQuaternion(camera.quaternion);
+    }
+  }
 }
 
 function selectBody(b) {
@@ -496,12 +575,35 @@ const flightOff = new THREE.Vector3();
 const flightTo  = new THREE.Vector3();
 const FLY_MS = 1100;
 
-function flyTo(b) {
+function flyTo(b, opts) {
   if (!b || !b.mesh) return;
   setFollow(null);
-  const off = radiusOf(b) * 6 + 30;
-  flightOff.set(off, off * 0.4, off);
-  flight = { body: b, from: camera.position.clone(), t0: performance.now() };
+  camera.up.set(0, 1, 0);                              // reset world-up
+  const land = opts && opts.land;
+  if (land) {
+    // Land hugging the surface on the side currently facing the camera,
+    // looking forward but tilted slightly down — feet on the ground, ground
+    // visible in the foreground (not a flat-horizon stare).
+    const normal = new THREE.Vector3()
+      .subVectors(camera.position, b.mesh.position);
+    if (normal.lengthSq() < 1e-6) normal.set(0, 1, 0);
+    normal.normalize();
+    const r = radiusOf(b);
+    flightOff.copy(normal).multiplyScalar(r * 1.005 + 0.15);   // ~ankle-deep
+    const fwd = new THREE.Vector3();
+    camera.getWorldDirection(fwd);
+    const tangent = fwd.sub(normal.clone().multiplyScalar(fwd.dot(normal)));
+    if (tangent.lengthSq() < 1e-4)
+      tangent.set(1, 0, 0).sub(normal.clone().multiplyScalar(normal.x));
+    tangent.normalize();
+    flight = { body: b, from: camera.position.clone(),
+               t0: performance.now(), land: true, normal, tangent,
+               pitch: -0.22 };                                  // look ~13° down
+  } else {
+    const off = radiusOf(b) * 6 + 30;
+    flightOff.set(off, off * 0.4, off);
+    flight = { body: b, from: camera.position.clone(), t0: performance.now() };
+  }
 }
 
 function updateFlight() {
@@ -512,12 +614,23 @@ function updateFlight() {
   const e = 1 - Math.pow(1 - u, 3);                    // easeOutCubic
   flightTo.copy(flight.body.mesh.position).add(flightOff);
   camera.position.lerpVectors(flight.from, flightTo, e);
-  camera.lookAt(flight.body.mesh.position);
+  if (flight.land) {
+    // look along the tangent, tilted slightly down so the ground fills the
+    // bottom of the frame — the "standing on the planet" view.
+    const c = Math.cos(flight.pitch), s = Math.sin(flight.pitch);
+    const lookDir = flight.tangent.clone().multiplyScalar(c)
+      .add(flight.normal.clone().multiplyScalar(s));
+    camera.up.copy(flight.normal);
+    camera.lookAt(camera.position.clone().add(lookDir.multiplyScalar(1000)));
+  } else {
+    camera.lookAt(flight.body.mesh.position);
+  }
   controls.euler.setFromQuaternion(camera.quaternion);
-  if (u >= 1) { setFollow(flight.body); flight = null; }
+  if (u >= 1) { setFollow(flight.body, flight.land); flight = null; }
 }
 
 function focusCamera(b) { flyTo(b); }                  // button → same glide
+function landOn(b)     { flyTo(b, { land: true }); }
 
 // ---- UI wiring -----------------------------------------------------------
 const ui = setupUI(world, {
@@ -525,10 +638,13 @@ const ui = setupUI(world, {
   startPlacing(spec) { placing = spec; },
   cancelPlacing() { placing = null; },
   focus(b) { focusCamera(b); },
+  land(b)  { landOn(b); },
+  goto(b)  { selectBody(b); },        // dropdown → select + smooth-fly-to
   deleteBody(b) {
     const i = world.bodies.indexOf(b);
     if (i >= 0) world.bodies.splice(i, 1);
     if (world.selected === b) world.selected = null;
+    ui.refresh();
   },
   _speed: () => controls.speed,
   THREE,
