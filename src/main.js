@@ -328,6 +328,10 @@ function applyState(b, info) {
     g.material.color.set(0xff7a2a);          // accretion-like halo
     g.material.opacity = 1.0;
     b.glowScale = 3.2;
+    if (b.light) {                            // a black hole shouldn't keep
+      b.light.intensity = 0.15;               // lighting the system like a sun
+      b.light.color.setHex(0xffa050);
+    }
   } else if (info.accent === 'degenerate') {
     mat.color.set(0xffffff);
     if (mat.emissive) { mat.emissive.set(0xcfe0ff); mat.emissiveIntensity = 1.4; }
@@ -360,8 +364,8 @@ function syncMeshes() {
     b.mesh.scale.setScalar(r);
     b.mesh.rotation.y = (world.time * (b.spin || 0)) % (Math.PI * 2);
     const info = physicsOf(b);
-    applyState(b, info);
-    updateStarPhase(b);
+    updateStarPhase(b);                       // handle red-giant flip first…
+    applyState(b, info);                      // …then BH override can win
     if (b.flares) b.flares.visible = info.accent === 'star' || info.accent === 'normal';
     if (b.atmo) b.atmo.visible = info.accent === 'normal';   // gone if collapsed
     updateMoons(b);
@@ -430,10 +434,18 @@ function placeNewBody() {
   const posAU = hit.multiplyScalar(1 / SCALE);
 
   const center = heaviestNear(posAU);
+  // Sagittarius A* preset: real mass + radius just inside the Schwarzschild
+  // radius, so physicsOf classifies it as a black hole and applyState paints
+  // it black with the accretion-glow halo we already use for collapsed bodies.
+  const isSagA = placing.type === 'sagA';
   const b = makeBody({
-    name: placing.name, type: placing.type, mass: placing.mass,
-    color: placing.type === 'star' ? 0xffd27a : 0x6fb0ff,
+    name: placing.name,
+    type: isSagA ? 'star' : placing.type,
+    mass: isSagA ? 4.15e6 : placing.mass,
+    color: isSagA ? 0x000000
+         : placing.type === 'star' ? 0xffd27a : 0x6fb0ff,
     pos: posAU, vel: new THREE.Vector3(),
+    radiusKm: isSagA ? 1.1e7 : undefined,        // just inside R_Schwarzschild
   });
   if (center) b.vel.copy(circularOrbitVelocity(posAU, center, THREE));
   world.bodies.push(b);

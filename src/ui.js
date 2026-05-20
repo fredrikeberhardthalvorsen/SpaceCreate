@@ -63,6 +63,19 @@ export function setupUI(world, api) {
   // --- add body -----------------------------------------------------------
   const btnPlace = $('btnPlace');
   const btnCancel = $('btnPlaceCancel');
+  // sensible defaults per Type — picking Sgr A* fills in its real mass/name
+  $('newType').onchange = (e) => {
+    if (e.target.value === 'sagA') {
+      $('newName').value = 'Sgr A*';
+      $('newMass').value = 4.15e6;
+    } else if (e.target.value === 'star') {
+      if (parseFloat($('newMass').value) < 0.05) $('newMass').value = 1;
+      $('newName').value = 'New star';
+    } else {
+      if (parseFloat($('newMass').value) > 0.05) $('newMass').value = 3e-6;
+      $('newName').value = 'New body';
+    }
+  };
   btnPlace.onclick = () => {
     api.startPlacing({
       type: $('newType').value,
