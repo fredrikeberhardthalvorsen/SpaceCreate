@@ -67,7 +67,7 @@ function load(presetName) {
   world.bodies = buildScene(presetName).filter(b => b.name !== '_bc');
   world.time = 0;
   world.selected = null;
-  setFollow(null);
+  setFollow(null); flight = null;
   ui.refresh();
 }
 
@@ -150,6 +150,26 @@ function makeFlares() {
   return group;
 }
 
+// Swap a star's look between normal and red-giant when its radius crosses
+// the threshold. Rebuilds the texture (cheap one-shot) and re-tints the
+// glow + point light to match.
+const RED_GIANT_KM = 1.2e6;
+function updateStarPhase(b) {
+  if (b.type !== 'star') return;
+  const want = b.radiusKm > RED_GIANT_KM;
+  if (b.__giant === want) return;
+  b.__giant = want;
+  const tex = makeTextures(b);                  // styleFor now sees __giant
+  b.mesh.material.map?.dispose();
+  b.mesh.material.map = tex.map;
+  b.mesh.material.needsUpdate = true;
+  if (b.glow) b.glow.material.color.setHex(want ? 0xff5a28 : b.color);
+  if (b.light) {
+    b.light.color.setHex(want ? 0xff6a3a : 0xfff0d0);
+    b.light.intensity = want ? 1.6 : 2.5;
+  }
+}
+
 function animateFlares(tSec) {
   for (const b of world.bodies) {
     if (!b.flares || !b.flares.visible) continue;
@@ -224,6 +244,7 @@ function ensureMesh(b) {
 
   if (isStar) {
     const light = new THREE.PointLight(0xfff0d0, 2.5, 0, 0.0);
+    b.light = light;
     b.mesh.add(light);
     const glowMat = new THREE.SpriteMaterial({
       map: glowTexture, color: b.color, transparent: true, opacity: 0.9,
@@ -340,6 +361,7 @@ function syncMeshes() {
     b.mesh.rotation.y = (world.time * (b.spin || 0)) % (Math.PI * 2);
     const info = physicsOf(b);
     applyState(b, info);
+    updateStarPhase(b);
     if (b.flares) b.flares.visible = info.accent === 'star' || info.accent === 'normal';
     if (b.atmo) b.atmo.visible = info.accent === 'normal';   // gone if collapsed
     updateMoons(b);
@@ -393,7 +415,7 @@ canvas.addEventListener('click', (e) => {
     return;
   }
   if (placing) { placeNewBody(); return; }
-  setFollow(null);                // empty space → release follow & fly free
+  setFollow(null); flight = null;  // empty space → release & fly free
   controls.lock();
 });
 
@@ -451,18 +473,39 @@ function updateFollow() {
 function selectBody(b) {
   world.selected = b;
   ui.showEditor(b);
-  focusCamera(b);          // snap to it…
-  setFollow(b);            // …then follow it as it orbits
+  flyTo(b);                // smooth glide in, then follow on arrival
 }
 
-function focusCamera(b) {
-  const target = b.mesh.position;
+// Smooth camera flight to a body — eases in over ~1.1s, then hands off to
+// the follow system. Cancelled if the user starts steering (keys / pointer
+// lock), so you can always seize control mid-flight.
+let flight = null;
+const flightOff = new THREE.Vector3();
+const flightTo  = new THREE.Vector3();
+const FLY_MS = 1100;
+
+function flyTo(b) {
+  if (!b || !b.mesh) return;
+  setFollow(null);
   const off = radiusOf(b) * 6 + 30;
-  camera.position.set(target.x + off, target.y + off * 0.4, target.z + off);
-  camera.lookAt(target);
-  controls.euler.setFromQuaternion(camera.quaternion);
-  setFollow(b);
+  flightOff.set(off, off * 0.4, off);
+  flight = { body: b, from: camera.position.clone(), t0: performance.now() };
 }
+
+function updateFlight() {
+  if (!flight) return;
+  if (!world.bodies.includes(flight.body) ||
+      controls.enabled || controls.keys.size > 0) { flight = null; return; }
+  const u = Math.min(1, (performance.now() - flight.t0) / FLY_MS);
+  const e = 1 - Math.pow(1 - u, 3);                    // easeOutCubic
+  flightTo.copy(flight.body.mesh.position).add(flightOff);
+  camera.position.lerpVectors(flight.from, flightTo, e);
+  camera.lookAt(flight.body.mesh.position);
+  controls.euler.setFromQuaternion(camera.quaternion);
+  if (u >= 1) { setFollow(flight.body); flight = null; }
+}
+
+function focusCamera(b) { flyTo(b); }                  // button → same glide
 
 // ---- UI wiring -----------------------------------------------------------
 const ui = setupUI(world, {
@@ -505,7 +548,8 @@ function frame(now) {
 
   controls.update(dtReal);
   syncMeshes();
-  updateFollow();                // ride along with the selected body
+  updateFlight();                // smooth glide to a clicked body
+  updateFollow();                // …then ride along with it
   animateFlares(now / 1000);     // wall-clock → flares pulse even when paused
   ui.tick();
   renderer.render(scene, camera);

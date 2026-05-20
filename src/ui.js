@@ -137,19 +137,26 @@ export function setupUI(world, api) {
   $('edMass').oninput = (e) => {
     if (world.selected) world.selected.mass = Math.max(1e-9, parseFloat(e.target.value) || 1e-9);
   };
-  $('edRadius').oninput = (e) => {
+  function applyRadius(km) {
     const b = world.selected;
     if (!b) return;
-    const km = posToKm(parseInt(e.target.value, 10));
+    km = Math.max(Math.pow(10, RK0), Math.min(Math.pow(10, RK1), km));
     if ($('edKeepDensity').checked && b.radiusKm > 0) {
-      // hold density constant → mass ∝ r³, so its real gravitational pull
-      // (and orbital influence on everything else) grows fast.
+      // hold density constant → mass ∝ r³, so its gravitational pull grows
       b.mass = Math.max(1e-12, b.mass * Math.pow(km / b.radiusKm, 3));
       $('edMass').value = b.mass;
     }
     b.radiusKm = km;
+    $('edRadius').value = kmToPos(km);
     $('edRadiusVal').textContent = radiusStr(km);
-  };
+  }
+  $('edRadius').oninput = (e) => applyRadius(posToKm(parseInt(e.target.value, 10)));
+  for (const btn of document.querySelectorAll('[data-rstep]')) {
+    btn.onclick = () => {
+      if (world.selected)
+        applyRadius(world.selected.radiusKm * parseFloat(btn.dataset.rstep));
+    };
+  }
   $('edColor').oninput = (e) => {
     if (!world.selected) return;
     world.selected.color = parseInt(e.target.value.slice(1), 16);
