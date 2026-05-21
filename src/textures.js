@@ -70,7 +70,11 @@ function ramp(stops, t) {
 
 // Classify a body into a visual style from its name / type / mass.
 export function styleFor(body) {
-  if (body.type === 'star') return body.__giant ? 'red_giant' : 'star';
+  if (body.type === 'star') {
+    if (body.__starPhase === 'dark_giant') return 'dark_red_giant';
+    if (body.__starPhase === 'giant')      return 'red_giant';
+    return 'star';
+  }
   const n = (body.name || '').toLowerCase();
   if (n.includes('mercury')) return 'rock_gray';
   if (n.includes('venus')) return 'venus';
@@ -181,6 +185,11 @@ export function makeTextures(body) {
         col = ramp([[0, [70, 10, 0]], [0.4, [170, 45, 15]],
                     [0.75, [230, 90, 35]], [1, [255, 160, 80]]], g);
         height = g;
+      } else if (style === 'dark_red_giant') {  // late-stage: dim, near collapse
+        const g = post(0.18 + 0.78 * fbmStar(land, detail, u, v), 5);
+        col = ramp([[0, [22, 0, 0]], [0.35, [78, 12, 4]],
+                    [0.7, [140, 32, 14]], [1, [195, 70, 28]]], g);
+        height = g;
       } else {
         col = base;
       }
@@ -199,7 +208,8 @@ export function makeTextures(body) {
   map.colorSpace = THREE.SRGBColorSpace;
   map.anisotropy = 8;
   const bump = new THREE.CanvasTexture(bp);
-  return { map, bump, isStar: style === 'star' || style === 'red_giant' };
+  return { map, bump,
+    isStar: style === 'star' || style === 'red_giant' || style === 'dark_red_giant' };
 }
 
 function fbmStar(a, b, u, v) { return a(u, v) * 0.6 + b(u * 2, v * 2) * 0.4; }

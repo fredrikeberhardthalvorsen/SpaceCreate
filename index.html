@@ -76,16 +76,13 @@
     <h2>Selected: <span id="selName">—</span></h2>
     <label>Name <input id="edName" type="text" /></label>
     <label>Mass (M☉) <input id="edMass" type="number" step="any" /></label>
-    <label hidden>Radius: <b id="edRadiusVal">—</b>
-      <input id="edRadius" type="range" min="0" max="1000" step="1" />
-    </label>
     <div class="row">
       <button data-rstep="0.1">10×−</button>
       <button data-rstep="0.2">5×−</button>
       <button data-rstep="5">5×+</button>
       <button data-rstep="10">10×+</button>
     </div>
-    <label><input id="edKeepDensity" type="checkbox" /> Scale mass with size
+    <label><input id="edKeepDensity" type="checkbox" checked /> Scale mass with size
       <span class="hint">ON: bigger ⇒ heavier ⇒ gravity grows and it really
         yanks the other planets (keeps density constant).<br>
         OFF: mass fixed — squeezing it just changes density and can collapse it.</span>

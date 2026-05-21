@@ -151,23 +151,42 @@ function makeFlares() {
   return group;
 }
 
-// Swap a star's look between normal and red-giant when its radius crosses
-// the threshold. Rebuilds the texture (cheap one-shot) and re-tints the
-// glow + point light to match.
-const RED_GIANT_KM = 1.2e6;
+// Star evolution by radius. The buttons multiply radius by 5 / 10, so anchor
+// the giant thresholds to multiples of the Sun's ~7e5 km so one tap of 5×+ on
+// the Sun lands exactly on red giant, one tap of 10×+ lands on dark red giant,
+// and a follow-up tap pushes it past the core-collapse threshold.
+const STAR_PHASE_GIANT_KM = 3.5e6;   // ~5× the Sun  → red giant
+const STAR_PHASE_DARK_KM  = 7.0e6;   // ~10× the Sun → dark red giant
+const SUPERNOVA_KM        = 2.5e7;   // ~35× the Sun → goes nova
+
+// Glow + point-light tint per phase. 'normal' inherits the body's user-chosen
+// hue so the colour picker still does something.
+const STAR_PHASE_TINT = {
+  giant:      { glow: 0xff5a28, light: 0xff6a3a, intensity: 1.6 },
+  dark_giant: { glow: 0x8a1808, light: 0x6e1a10, intensity: 0.85 },
+};
+
+function starPhaseFor(b) {
+  if (b.radiusKm >= STAR_PHASE_DARK_KM)  return 'dark_giant';
+  if (b.radiusKm >= STAR_PHASE_GIANT_KM) return 'giant';
+  return 'normal';
+}
+
+// Rebuild texture + retint glow/light when the star crosses a phase boundary.
 function updateStarPhase(b) {
   if (b.type !== 'star') return;
-  const want = b.radiusKm > RED_GIANT_KM;
-  if (b.__giant === want) return;
-  b.__giant = want;
-  const tex = makeTextures(b);                  // styleFor now sees __giant
+  const want = starPhaseFor(b);
+  if (b.__starPhase === want) return;
+  b.__starPhase = want;
+  const tex = makeTextures(b);                  // styleFor now sees __starPhase
   b.mesh.material.map?.dispose();
   b.mesh.material.map = tex.map;
   b.mesh.material.needsUpdate = true;
-  if (b.glow) b.glow.material.color.setHex(want ? 0xff5a28 : b.color);
+  const t = STAR_PHASE_TINT[want];
+  if (b.glow)  b.glow.material.color.setHex(t ? t.glow : b.color);
   if (b.light) {
-    b.light.color.setHex(want ? 0xff6a3a : 0xfff0d0);
-    b.light.intensity = want ? 1.6 : 2.5;
+    b.light.color.setHex(t ? t.light : 0xfff0d0);
+    b.light.intensity = t ? t.intensity : 2.5;
   }
 }
 
@@ -361,13 +380,215 @@ function applyState(b, info) {
   }
 }
 
+// ---- phase transitions: planet → star → supernova ----------------------
+// Once a body's mass crosses the fusion threshold we mutate its `type` (so
+// ensureMesh rebuilds it with star lighting/glow/flares), and past the
+// core-collapse threshold we play a one-shot supernova and leave a neutron
+// star remnant behind so anything orbiting it keeps its orbit.
+const STAR_IGNITE_MSUN = 0.08;       // real fusion threshold
+
+function disposePlanetVisuals(b) {
+  // Tear down everything ensureMesh built, so it re-creates as a star next
+  // frame. Keep the body's trail / id / pos so the transition is in-place.
+  if (b.mesh) {
+    scene.remove(b.mesh);
+    b.mesh.material.map?.dispose();
+    b.mesh.material.bumpMap?.dispose();
+    b.mesh.material.dispose();
+    b.mesh = null;
+  }
+  if (b.atmo) { b.atmo.material.dispose(); b.atmo = null; }
+  if (b.ring) {
+    scene.remove(b.ring);
+    const disk = b.ring.children[0];
+    disk.geometry.dispose(); disk.material.map?.dispose(); disk.material.dispose();
+    b.ring = null;
+  }
+  if (b.moons) {
+    for (const mo of b.moons) {
+      scene.remove(mo.mesh);
+      mo.mesh.material.map?.dispose();
+      mo.mesh.material.bumpMap?.dispose();
+      mo.mesh.material.dispose();
+    }
+    b.moons = null;
+  }
+  if (b.flares) {
+    for (const m of b.flares.children) { m.geometry.dispose(); m.material.dispose(); }
+    b.flares = null;
+  }
+  if (b.hitbox) { b.hitbox.material.dispose(); b.hitbox = null; }
+  if (b.glow) { scene.remove(b.glow); b.glow.material.dispose(); b.glow = null; }
+  b.__starPhase = undefined;
+}
+
+function promoteToStar(b) {
+  b.type = 'star';
+  disposePlanetVisuals(b);             // ensureMesh will rebuild as a star
+}
+
+const supernovae = [];
+const SN_DURATION_MS = 10000;
+const SN_PARTICLES = 1400;
+
+function triggerSupernova(b) {
+  b.__wentNova = true;
+  const origin = b.mesh.position.clone();
+  const baseR = radiusOf(b);
+
+  // Bright initial flash — a swelling additive sprite. Reuses glowTexture so
+  // the bloom edge is round, not square.
+  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture, color: 0xffffff, transparent: true, opacity: 1.0,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  flash.position.copy(origin);
+  flash.scale.setScalar(baseR * 8);
+  scene.add(flash);
+
+  // Camera-facing shockwave ring. We re-billboard it each frame in update.
+  const shock = new THREE.Mesh(
+    new THREE.RingGeometry(0.96, 1.0, 80),
+    new THREE.MeshBasicMaterial({
+      color: 0xfff0c0, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+  shock.position.copy(origin);
+  shock.scale.setScalar(baseR * 2);
+  scene.add(shock);
+
+  // Filamentary ejecta — cluster particles along ~12 random axes so the
+  // cloud reads as streamers rather than a smooth puff (Cas-A-ish look).
+  const FILAMENTS = 12;
+  const filDirs = [];
+  for (let f = 0; f < FILAMENTS; f++) {
+    const u = Math.random() * 2 - 1;
+    const t = Math.random() * Math.PI * 2;
+    const s = Math.sqrt(1 - u * u);
+    filDirs.push([s * Math.cos(t), u, s * Math.sin(t)]);
+  }
+  const palette = [
+    [0.60, 0.32, 1.00],   // violet
+    [1.00, 0.38, 0.85],   // magenta
+    [0.40, 0.92, 1.00],   // cyan
+    [1.00, 0.85, 0.45],   // gold
+    [1.00, 0.98, 0.85],   // white-hot
+    [1.00, 0.55, 0.35],   // ember
+  ];
+  const positions = new Float32Array(SN_PARTICLES * 3);
+  const colors    = new Float32Array(SN_PARTICLES * 3);
+  const vels      = new Float32Array(SN_PARTICLES * 3);
+  for (let i = 0; i < SN_PARTICLES; i++) {
+    // 70% along a filament with small scatter; 30% fully isotropic halo
+    let dx, dy, dz;
+    if (Math.random() < 0.7) {
+      const f = filDirs[i % FILAMENTS];
+      const sc = 0.18;
+      dx = f[0] + (Math.random() - 0.5) * sc;
+      dy = f[1] + (Math.random() - 0.5) * sc;
+      dz = f[2] + (Math.random() - 0.5) * sc;
+    } else {
+      const u = Math.random() * 2 - 1;
+      const t = Math.random() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      dx = s * Math.cos(t); dy = u; dz = s * Math.sin(t);
+    }
+    const inv = 1 / Math.hypot(dx, dy, dz);
+    dx *= inv; dy *= inv; dz *= inv;
+    // Wide speed spread → trailing filament look (slow inner, fast leading)
+    const speed = baseR * (5 + Math.pow(Math.random(), 0.5) * 18);
+    vels[i*3]     = dx * speed;
+    vels[i*3 + 1] = dy * speed;
+    vels[i*3 + 2] = dz * speed;
+    positions[i*3]     = origin.x;
+    positions[i*3 + 1] = origin.y;
+    positions[i*3 + 2] = origin.z;
+    const c = palette[Math.floor(Math.random() * palette.length)];
+    colors[i*3] = c[0]; colors[i*3 + 1] = c[1]; colors[i*3 + 2] = c[2];
+  }
+  const pgeo = new THREE.BufferGeometry();
+  pgeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  pgeo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  const points = new THREE.Points(pgeo, new THREE.PointsMaterial({
+    size: 7, vertexColors: true, transparent: true, opacity: 1.0,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+  }));
+  scene.add(points);
+
+  // The progenitor is gone — completely dispersed. Anything that was
+  // orbiting it loses its anchor and flies off on its last tangent.
+  disposeBody(b);
+  const idx = world.bodies.indexOf(b);
+  if (idx >= 0) world.bodies.splice(idx, 1);
+  if (world.selected === b) { world.selected = null; ui.refresh(); }
+
+  supernovae.push({ flash, shock, points, vels, positions, t0: performance.now() });
+  return true;                    // tell syncMeshes to skip this body
+}
+
+function updateSupernovae(dtReal) {
+  for (let i = supernovae.length - 1; i >= 0; i--) {
+    const sn = supernovae[i];
+    const elapsed = performance.now() - sn.t0;
+    const u = Math.min(1, elapsed / SN_DURATION_MS);
+
+    // Flash: bright initial pop that fades over ~22% of the timeline
+    sn.flash.scale.multiplyScalar(1 + dtReal * 1.8);
+    sn.flash.material.opacity = Math.max(0, 1 - elapsed / (SN_DURATION_MS * 0.22));
+    if (sn.flash.material.opacity <= 0 && sn.flash.parent) {
+      scene.remove(sn.flash); sn.flash.material.dispose();
+    }
+
+    // Shockwave ring keeps growing and faces the camera so it stays visible
+    sn.shock.scale.multiplyScalar(1 + dtReal * 0.85);
+    sn.shock.lookAt(camera.position);
+    sn.shock.material.opacity = Math.max(0, 0.85 * (1 - u));
+
+    // Ejecta drift with mild drag — keeps the leading edge sharp
+    const pos = sn.positions, v = sn.vels;
+    const drag = Math.pow(0.85, dtReal);     // frame-rate independent decay
+    for (let j = 0; j < SN_PARTICLES; j++) {
+      pos[j*3]     += v[j*3]     * dtReal;
+      pos[j*3 + 1] += v[j*3 + 1] * dtReal;
+      pos[j*3 + 2] += v[j*3 + 2] * dtReal;
+      v[j*3]     *= drag;
+      v[j*3 + 1] *= drag;
+      v[j*3 + 2] *= drag;
+    }
+    sn.points.geometry.attributes.position.needsUpdate = true;
+    sn.points.material.opacity = u < 0.45 ? 1 : Math.max(0, (1 - u) / 0.55);
+
+    if (u >= 1) {
+      scene.remove(sn.shock);
+      sn.shock.geometry.dispose(); sn.shock.material.dispose();
+      scene.remove(sn.points);
+      sn.points.geometry.dispose(); sn.points.material.dispose();
+      if (sn.flash.parent) scene.remove(sn.flash);
+      supernovae.splice(i, 1);
+    }
+  }
+}
+
+function checkPhaseTransition(b) {
+  if (b.type === 'planet' && b.mass >= STAR_IGNITE_MSUN) {
+    promoteToStar(b);
+    return false;
+  }
+  if (b.type === 'star' && b.radiusKm >= SUPERNOVA_KM && !b.__wentNova && b.mesh) {
+    return triggerSupernova(b);         // true → body removed, skip rendering
+  }
+  return false;
+}
+
 function syncMeshes() {
   // drop meshes for bodies removed by merges/deletion
   for (const obj of [...scene.children]) {
     const b = obj.userData && obj.userData.body;
     if (b && !world.bodies.includes(b)) disposeBody(b);
   }
-  for (const b of world.bodies) {
+  // snapshot the list because checkPhaseTransition may splice it (supernova)
+  for (const b of [...world.bodies]) {
+    if (checkPhaseTransition(b)) continue;
     ensureMesh(b);
     const r = radiusOf(b);
     b.mesh.position.copy(b.pos).multiplyScalar(SCALE);
@@ -678,6 +899,7 @@ function frame(now) {
   syncMeshes();
   updateFlight();                // smooth glide to a clicked body
   updateFollow();                // …then ride along with it
+  updateSupernovae(dtReal);      // expanding shells from any recent ★ deaths
   animateFlares(now / 1000);     // wall-clock → flares pulse even when paused
   ui.tick();
   renderer.render(scene, camera);

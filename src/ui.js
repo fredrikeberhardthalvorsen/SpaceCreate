@@ -51,7 +51,7 @@ export function setupUI(world, api) {
     world.rate = posToRate(parseInt(e.target.value, 10));
     $('rateLabel').textContent = rateStr(world.rate);
   };
-  setRate(1);
+  setRate(0.1);
   $('trails').onchange = (e) => { world.trails = e.target.checked; };
   $('exagg').onchange = (e) => { world.exaggerate = e.target.checked; };
 
@@ -147,14 +147,9 @@ export function setupUI(world, api) {
     return t + dir;
   }
 
-  // --- radius (real, km) on a log slider ----------------------------------
-  const RK0 = Math.log10(0.5), RK1 = Math.log10(2.5e6);   // 0.5 km … ~3.5 R☉
-  const posToKm = (p) => Math.pow(10, RK0 + (p / 1000) * (RK1 - RK0));
-  const kmToPos = (km) => Math.round(
-    Math.max(0, Math.min(1, (Math.log10(km) - RK0) / (RK1 - RK0))) * 1000);
-  const radiusStr = (km) =>
-    fmtSci(km, 'km', km < 100 ? 1 : 0) +
-    '  (' + (km / 6371).toPrecision(3) + ' R⊕)';
+  // --- radius (real, km) — only a floor; grow as big as you like. Past
+  // ~0.08 M☉ the star transition takes over in main.js (planet → star → nova).
+  const R_MIN_KM = 0.5;
 
   // --- editor -------------------------------------------------------------
   const ed = $('editor');
@@ -170,8 +165,6 @@ export function setupUI(world, api) {
     $('selName').textContent = b.name;
     $('edName').value = b.name;
     $('edMass').value = b.mass;
-    $('edRadius').value = kmToPos(b.radiusKm || 1);
-    $('edRadiusVal').textContent = radiusStr(b.radiusKm || 1);
     $('edDay').value = spinToPos(b.spin || 0);
     $('edDayVal').textContent = dayStr(b.spin || 0);
     $('edColor').value = '#' + b.color.toString(16).padStart(6, '0');
@@ -189,17 +182,14 @@ export function setupUI(world, api) {
   function applyRadius(km) {
     const b = world.selected;
     if (!b) return;
-    km = Math.max(Math.pow(10, RK0), Math.min(Math.pow(10, RK1), km));
+    km = Math.max(R_MIN_KM, km);
     if ($('edKeepDensity').checked && b.radiusKm > 0) {
       // hold density constant → mass ∝ r³, so its gravitational pull grows
       b.mass = Math.max(1e-12, b.mass * Math.pow(km / b.radiusKm, 3));
       $('edMass').value = b.mass;
     }
     b.radiusKm = km;
-    $('edRadius').value = kmToPos(km);
-    $('edRadiusVal').textContent = radiusStr(km);
   }
-  $('edRadius').oninput = (e) => applyRadius(posToKm(parseInt(e.target.value, 10)));
   for (const btn of document.querySelectorAll('[data-rstep]')) {
     btn.onclick = () => {
       if (world.selected)
