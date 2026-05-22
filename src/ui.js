@@ -212,7 +212,7 @@ export function setupUI(world, api) {
   $('btnLand').onclick = () => { if (world.selected) api.land(world.selected); };
   $('btnDelete').onclick = () => {
     if (!world.selected) return;
-    api.deleteBody(world.selected);
+    api.explode(world.selected);        // blow it apart, reveal the core
     showEditor(null);
   };
 

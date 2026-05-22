@@ -167,8 +167,9 @@ const STAR_PHASE_TINT = {
 };
 
 function starPhaseFor(b) {
-  if (b.radiusKm >= STAR_PHASE_DARK_KM)  return 'dark_giant';
-  if (b.radiusKm >= STAR_PHASE_GIANT_KM) return 'giant';
+  const km = dispKmOf(b);                     // follow the visible size
+  if (km >= STAR_PHASE_DARK_KM)  return 'dark_giant';
+  if (km >= STAR_PHASE_GIANT_KM) return 'giant';
   return 'normal';
 }
 
@@ -290,8 +291,27 @@ function ensureMesh(b) {
 // viewable (Earth ≈ 2.5, Jupiter ≈ 5.6, Sun ≈ 12). Floor so a collapsed
 // body is still a clickable dot rather than vanishing.
 const kmToUnits = (km) => Math.cbrt(Math.max(1, km)) * 0.135;
+
+// The *displayed* radius lags behind the real one so size edits ease in
+// rather than snapping. `dispKm` chases `radiusKm`; everything visual (mesh
+// scale, moons, and the star-phase / supernova thresholds) reads dispKm, so a
+// growing star visibly swells, reddens, then bursts mid-grow.
+const dispKmOf = (b) => b.dispKm ?? b.radiusKm ?? 1;
+
+// Ease dispKm toward radiusKm in cube-root space, so the on-screen size grows
+// at a steady visual rate regardless of how huge the jump is. ~0.7s to settle.
+function easeRadius(b, dtReal) {
+  if (b.dispKm === undefined) { b.dispKm = b.radiusKm; return; }
+  if (b.dispKm === b.radiusKm) return;
+  const ct = Math.cbrt(b.radiusKm), cd = Math.cbrt(b.dispKm);
+  if (Math.abs(ct - cd) < 1e-3) { b.dispKm = b.radiusKm; return; }
+  const k = 1 - Math.pow(0.02, dtReal);          // frame-rate independent
+  const nd = cd + (ct - cd) * k;
+  b.dispKm = nd * nd * nd;
+}
+
 function radiusOf(b) {
-  return Math.max(0.6, kmToUnits(b.radiusKm || 1)) * (world.exaggerate ? 1 : 0.55);
+  return Math.max(0.6, kmToUnits(dispKmOf(b))) * (world.exaggerate ? 1 : 0.55);
 }
 
 // Build moon satellites for a planet. They are NOT N-body bodies (a moon's
@@ -569,18 +589,118 @@ function updateSupernovae(dtReal) {
   }
 }
 
+// ---- "Explode planet" button effect -------------------------------------
+// Blow the crust off as tumbling shards and reveal a glowing molten core for
+// exactly 0.97 s, then the debris keeps flying and fades out. Purely cosmetic
+// — the body is removed from the sim the instant it's detonated.
+const explosions = [];
+const CORE_VISIBLE_MS  = 970;      // show the core for 0.97 s, as requested
+const DEBRIS_DURATION_MS = 2600;   // shards keep flying a bit after that
+const shardGeo = new THREE.IcosahedronGeometry(1, 0);   // shared faceted chunk
+
+function triggerExplosion(b) {
+  const origin = b.mesh.position.clone();
+  const r = radiusOf(b);                    // displayed planet radius (units)
+  const color = b.color;
+
+  // Molten core — bright additive sphere + soft halo, revealed at the centre.
+  const core = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({
+    color: 0xff5a1e, transparent: true, opacity: 1,
+    blending: THREE.AdditiveBlending, depthWrite: false }));
+  core.position.copy(origin);
+  core.scale.setScalar(r * 0.6);
+  scene.add(core);
+  const coreGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture, color: 0xff8c3a, transparent: true, opacity: 0.95,
+    depthWrite: false, blending: THREE.AdditiveBlending }));
+  coreGlow.position.copy(origin);
+  coreGlow.scale.setScalar(r * 2.4);
+  scene.add(coreGlow);
+
+  // Crust shards — tumbling chunks tinted to the planet, flung outward.
+  const CHUNKS = 70;
+  const chunks = [];
+  for (let i = 0; i < CHUNKS; i++) {
+    const dir = new THREE.Vector3().randomDirection();
+    const mesh = new THREE.Mesh(shardGeo, new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 0.25,
+      roughness: 0.85, metalness: 0, transparent: true, opacity: 1 }));
+    mesh.position.copy(origin).addScaledVector(dir, r * (0.5 + Math.random() * 0.5));
+    mesh.scale.setScalar(r * (0.06 + Math.random() * 0.16));
+    scene.add(mesh);
+    chunks.push({
+      mesh,
+      vel: dir.clone().multiplyScalar(r * (3 + Math.random() * 9)),
+      spin: new THREE.Vector3((Math.random() - 0.5) * 7,
+                              (Math.random() - 0.5) * 7,
+                              (Math.random() - 0.5) * 7),
+    });
+  }
+
+  explosions.push({ core, coreGlow, chunks, coreGone: false, t0: performance.now() });
+
+  // The planet is gone — remove from the sim so nothing keeps orbiting it.
+  disposeBody(b);
+  const idx = world.bodies.indexOf(b);
+  if (idx >= 0) world.bodies.splice(idx, 1);
+  if (world.selected === b) { world.selected = null; ui.refresh(); }
+}
+
+function freeCore(ex) {
+  scene.remove(ex.core); ex.core.material.dispose();
+  scene.remove(ex.coreGlow); ex.coreGlow.material.dispose();
+  ex.coreGone = true;
+}
+
+function updateExplosions(dtReal) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const ex = explosions[i];
+    const elapsed = performance.now() - ex.t0;
+
+    // Core stays for 0.97 s, dimming as it goes, then is freed.
+    if (!ex.coreGone) {
+      const cu = elapsed / CORE_VISIBLE_MS;
+      if (cu >= 1) freeCore(ex);
+      else {
+        const op = 1 - cu * cu;                       // ease-out fade
+        ex.core.material.opacity = op;
+        ex.coreGlow.material.opacity = op * 0.95;
+        ex.core.scale.setScalar(ex.core.scale.x * (1 + dtReal * 0.4));  // swell
+      }
+    }
+
+    // Shards fly out, tumble, slow with drag, fade over the final stretch.
+    const du = Math.min(1, elapsed / DEBRIS_DURATION_MS);
+    const drag = Math.pow(0.45, dtReal);
+    for (const c of ex.chunks) {
+      c.mesh.position.addScaledVector(c.vel, dtReal);
+      c.mesh.rotation.x += c.spin.x * dtReal;
+      c.mesh.rotation.y += c.spin.y * dtReal;
+      c.mesh.rotation.z += c.spin.z * dtReal;
+      c.vel.multiplyScalar(drag);
+      if (du > 0.55) c.mesh.material.opacity = Math.max(0, (1 - du) / 0.45);
+    }
+
+    if (elapsed >= DEBRIS_DURATION_MS) {
+      if (!ex.coreGone) freeCore(ex);
+      for (const c of ex.chunks) { scene.remove(c.mesh); c.mesh.material.dispose(); }
+      explosions.splice(i, 1);
+    }
+  }
+}
+
 function checkPhaseTransition(b) {
   if (b.type === 'planet' && b.mass >= STAR_IGNITE_MSUN) {
     promoteToStar(b);
     return false;
   }
-  if (b.type === 'star' && b.radiusKm >= SUPERNOVA_KM && !b.__wentNova && b.mesh) {
+  if (b.type === 'star' && dispKmOf(b) >= SUPERNOVA_KM && !b.__wentNova && b.mesh) {
     return triggerSupernova(b);         // true → body removed, skip rendering
   }
   return false;
 }
 
-function syncMeshes() {
+function syncMeshes(dtReal = 0) {
   // drop meshes for bodies removed by merges/deletion
   for (const obj of [...scene.children]) {
     const b = obj.userData && obj.userData.body;
@@ -588,7 +708,8 @@ function syncMeshes() {
   }
   // snapshot the list because checkPhaseTransition may splice it (supernova)
   for (const b of [...world.bodies]) {
-    if (checkPhaseTransition(b)) continue;
+    easeRadius(b, dtReal);             // grow/shrink toward the new size first…
+    if (checkPhaseTransition(b)) continue;   // …so phases fire as it visibly grows
     ensureMesh(b);
     const r = radiusOf(b);
     b.mesh.position.copy(b.pos).multiplyScalar(SCALE);
@@ -861,6 +982,7 @@ const ui = setupUI(world, {
   focus(b) { focusCamera(b); },
   land(b)  { landOn(b); },
   goto(b)  { selectBody(b); },        // dropdown → select + smooth-fly-to
+  explode(b) { triggerExplosion(b); },   // blow it apart + reveal the core
   deleteBody(b) {
     const i = world.bodies.indexOf(b);
     if (i >= 0) world.bodies.splice(i, 1);
@@ -896,10 +1018,11 @@ function frame(now) {
   }
 
   controls.update(dtReal);
-  syncMeshes();
+  syncMeshes(dtReal);
   updateFlight();                // smooth glide to a clicked body
   updateFollow();                // …then ride along with it
   updateSupernovae(dtReal);      // expanding shells from any recent ★ deaths
+  updateExplosions(dtReal);      // "Explode planet" debris + molten core
   animateFlares(now / 1000);     // wall-clock → flares pulse even when paused
   ui.tick();
   renderer.render(scene, camera);
